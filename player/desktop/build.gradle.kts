@@ -128,7 +128,9 @@ compose.desktop {
     application {
         mainClass = "com.spela.player.desktop.MainKt"
 
-        jvmArgs += "-Djava.library.path=${nativeBuildDir.get().asFile.absolutePath}"
+        // Use forward slashes to prevent backslashes being interpreted as
+        // escape characters in the jpackage .cfg file on Windows.
+        jvmArgs += "-Djava.library.path=${nativeBuildDir.get().asFile.absolutePath.replace('\\', '/')}"
 
         nativeDistributions {
             targetFormats(TargetFormat.Dmg, TargetFormat.Msi, TargetFormat.Deb)
@@ -167,6 +169,26 @@ tasks.withType<Test> {
     timeout.set(Duration.ofMinutes(5))
     testLogging {
         events("failed")
+    }
+}
+
+// After jpackage creates the distributable, patch the .cfg file to replace the
+// build-machine's absolute native library path with $APPDIR so the packaged app
+// finds its native libs at runtime on end-user machines.
+tasks.matching { it.name == "createDistributable" || it.name == "createReleaseDistributable" }.configureEach {
+    doLast {
+        val nativeAbsPath = nativeBuildDir.get().asFile.absolutePath.replace('\\', '/')
+        val appImageDir = project.layout.buildDirectory.dir("compose/binaries/main/app").get().asFile
+        appImageDir.walkTopDown()
+            .filter { it.name.endsWith(".cfg") }
+            .forEach { cfg ->
+                val original = cfg.readText()
+                val patched = original.replace(nativeAbsPath, "\$APPDIR")
+                if (patched != original) {
+                    cfg.writeText(patched)
+                    logger.lifecycle("Patched native library path in ${cfg.name}")
+                }
+            }
     }
 }
 
